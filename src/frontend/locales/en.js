@@ -79,6 +79,8 @@ export default {
   xrayMonthlyUsed: 'Used this month',
   xrayOverQuota: 'Over quota',
   xrayMonthlyScope: 'NIC monthly outbound total (all protocols, counted since vnStat was installed)',
+  xrayTunnelTraffic: 'Tunnel traffic',
+  xrayTunnelNote: 'Caddy tunnel node1; counters reset when a channel reconnects, accumulated by snapshot diff',
   lastReport: 'Last Report',
   cpuUsage: 'CPU Usage',
   gpuInfo: 'GPU Info',

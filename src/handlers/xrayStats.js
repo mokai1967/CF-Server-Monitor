@@ -12,6 +12,12 @@
  *   （近似值；VLESS 经 Caddy 转发只算 1 台，见侧车脚本注释）。
  * - monthly_tx：vnStat 当月网卡出站总量（字节），覆盖全部 5 个协议。
  * 两者都是“最新值”语义（非累计计数器），读取时取最新一条非空快照。
+ *
+ * 侧车还上报隧道流量（2026-11-23 起）：
+ * - tunnel_up / tunnel_down：Caddy /status 里 node1 的 traffic.bytes_in /
+ *   bytes_out（当前通道累计字节；通道重连会清零）。与 Xray 计数器一样，
+ *   这里只存原始快照，区间用量由读取时对相邻快照求正向差分累计得到
+ *   （数值回落视为通道重连，回落后的新值按重连后新增用量计入）。
  */
 import { createSuccessResponse, createBadRequestResponse, createUnauthorizedResponse, createNotFoundResponse } from '../utils/errors.js';
 import { checkAuth, hasAppPasswordAccess, simpleAuthResponse } from '../middleware/auth.js';
@@ -30,8 +36,8 @@ export async function ensureXrayStatsTable(db) {
       PRIMARY KEY (server_id, ts)
     )
   `).run();
-  // 2026-11-23 新增列：在线设备数、月出站总量。老表用 ALTER 补列。
-  for (const col of ['device_count INTEGER', 'monthly_tx INTEGER']) {
+  // 2026-11-23 新增列：在线设备数、月出站总量、隧道流量。老表用 ALTER 补列。
+  for (const col of ['device_count INTEGER', 'monthly_tx INTEGER', 'tunnel_up INTEGER', 'tunnel_down INTEGER']) {
     try {
       await db.prepare(`ALTER TABLE xray_stats ADD COLUMN ${col}`).run();
     } catch (_) {
@@ -48,9 +54,10 @@ function normalizeSnapshotTs(value) {
 }
 
 // POST /api/xray-stats
-// body: { id, secret, uplink, downlink, ts?, device_count?, monthly_tx? }
+// body: { id, secret, uplink, downlink, ts?, device_count?, monthly_tx?, tunnel_up?, tunnel_down? }
 // （ts 为秒或毫秒时间戳，缺省用服务端时间；device_count / monthly_tx 为
-// 可选的最新值语义字段，缺省时不覆盖已有值）
+// 可选的最新值语义字段，缺省时不覆盖已有值；tunnel_up / tunnel_down 为
+// 可选的隧道通道累计计数器，缺省时存 NULL）
 export async function handleXrayStatsPost(request, env) {
   let data;
   try {
@@ -71,6 +78,8 @@ export async function handleXrayStatsPost(request, env) {
   const ts = normalizeSnapshotTs(data.ts);
   const deviceCount = data.device_count == null ? null : Math.max(0, Math.floor(Number(data.device_count) || 0));
   const monthlyTx = data.monthly_tx == null ? null : Math.max(0, Math.floor(Number(data.monthly_tx) || 0));
+  const tunnelUp = data.tunnel_up == null ? null : Math.max(0, Math.floor(Number(data.tunnel_up) || 0));
+  const tunnelDown = data.tunnel_down == null ? null : Math.max(0, Math.floor(Number(data.tunnel_down) || 0));
 
   await ensureXrayStatsTable(env.DB);
 
@@ -78,8 +87,8 @@ export async function handleXrayStatsPost(request, env) {
   if (!server) return createNotFoundResponse('Server not found');
 
   await env.DB.prepare(
-    'INSERT OR REPLACE INTO xray_stats (server_id, ts, uplink, downlink, device_count, monthly_tx) VALUES (?, ?, ?, ?, ?, ?)'
-  ).bind(serverId, ts, uplink, downlink, deviceCount, monthlyTx).run();
+    'INSERT OR REPLACE INTO xray_stats (server_id, ts, uplink, downlink, device_count, monthly_tx, tunnel_up, tunnel_down) VALUES (?, ?, ?, ?, ?, ?, ?, ?)'
+  ).bind(serverId, ts, uplink, downlink, deviceCount, monthlyTx, tunnelUp, tunnelDown).run();
 
   return createSuccessResponse({ ok: true, ts });
 }
@@ -108,16 +117,18 @@ export async function handleXrayStatsGet(request, env, sys) {
 
   // 区间起点之前的最后一条快照作为差分基线
   const baseline = await env.DB.prepare(
-    'SELECT ts, uplink, downlink FROM xray_stats WHERE server_id = ? AND ts < ? ORDER BY ts DESC LIMIT 1'
+    'SELECT ts, uplink, downlink, tunnel_up, tunnel_down FROM xray_stats WHERE server_id = ? AND ts < ? ORDER BY ts DESC LIMIT 1'
   ).bind(serverId, windowStart).first();
 
   const rows = await env.DB.prepare(
-    'SELECT ts, uplink, downlink FROM xray_stats WHERE server_id = ? AND ts >= ? ORDER BY ts ASC LIMIT 5000'
+    'SELECT ts, uplink, downlink, tunnel_up, tunnel_down FROM xray_stats WHERE server_id = ? AND ts >= ? ORDER BY ts ASC LIMIT 5000'
   ).bind(serverId, windowStart).all();
   const snaps = Array.isArray(rows?.results) ? rows.results : [];
 
   let totalUp = 0;
   let totalDown = 0;
+  let tunnelTotalUp = 0;
+  let tunnelTotalDown = 0;
   const hourlyMap = new Map();
   let prev = baseline || null;
   for (const s of snaps) {
@@ -127,6 +138,11 @@ export async function handleXrayStatsGet(request, env, sys) {
       const dDown = s.downlink >= prev.downlink ? s.downlink - prev.downlink : s.downlink;
       totalUp += dUp;
       totalDown += dDown;
+      // 隧道计数器同理（通道重连会清零）；任一端缺隧道值时跳过该对快照
+      if (prev.tunnel_up != null && prev.tunnel_down != null && s.tunnel_up != null && s.tunnel_down != null) {
+        tunnelTotalUp += s.tunnel_up >= prev.tunnel_up ? s.tunnel_up - prev.tunnel_up : s.tunnel_up;
+        tunnelTotalDown += s.tunnel_down >= prev.tunnel_down ? s.tunnel_down - prev.tunnel_down : s.tunnel_down;
+      }
       const hourStart = Math.floor(s.ts / 3600) * 3600;
       const bucket = hourlyMap.get(hourStart) || { ts: hourStart, up: 0, down: 0 };
       bucket.up += dUp;
@@ -149,6 +165,13 @@ export async function handleXrayStatsGet(request, env, sys) {
   const usedPercent = monthlyTx == null ? 0 : +(monthlyTx / MONTHLY_QUOTA_BYTES * 100).toFixed(1);
   const overQuota = monthlyTx != null && monthlyTx > MONTHLY_QUOTA_BYTES;
 
+  // 隧道最新会话原始值（最新一条带隧道计数的快照）；此前从未上报过时为 null，
+  // 此时区间累计也一并返回 null，前端据此隐藏隧道行。
+  const latestTunnel = await env.DB.prepare(
+    'SELECT ts, tunnel_up, tunnel_down FROM xray_stats WHERE server_id = ? AND tunnel_up IS NOT NULL AND tunnel_down IS NOT NULL ORDER BY ts DESC LIMIT 1'
+  ).bind(serverId).first();
+  const tunnelLatest = latestTunnel ? { ts: latestTunnel.ts, up: latestTunnel.tunnel_up, down: latestTunnel.tunnel_down } : null;
+
   return createSuccessResponse({
     server_id: serverId,
     hours,
@@ -161,6 +184,9 @@ export async function handleXrayStatsGet(request, env, sys) {
     monthly_tx: monthlyTx,
     quota: MONTHLY_QUOTA_BYTES,
     used_percent: usedPercent,
-    over_quota: overQuota
+    over_quota: overQuota,
+    tunnel_up: tunnelLatest ? tunnelTotalUp : null,
+    tunnel_down: tunnelLatest ? tunnelTotalDown : null,
+    tunnel_latest: tunnelLatest
   });
 }

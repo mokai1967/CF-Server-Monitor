@@ -79,6 +79,8 @@ export default {
   xrayMonthlyUsed: 'Utilisé ce mois-ci',
   xrayOverQuota: 'Quota dépassé',
   xrayMonthlyScope: 'Total sortant mensuel de la carte réseau (tous protocoles, compté depuis l’installation de vnStat)',
+  xrayTunnelTraffic: 'Trafic du tunnel',
+  xrayTunnelNote: 'Tunnel Caddy node1 ; les compteurs sont réinitialisés lors de la reconnexion d’un canal, cumulés par différence d’instantanés',
   lastReport: 'Dernier rapport',
   cpuUsage: 'Utilisation CPU',
   gpuInfo: 'Infos GPU',

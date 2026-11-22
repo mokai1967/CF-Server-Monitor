@@ -80,6 +80,8 @@ export default {
   xrayMonthlyUsed: '本月已用',
   xrayOverQuota: '已超上限',
   xrayMonthlyScope: '按网卡当月出站总量计（含全部协议，自 vnStat 安装日起算）',
+  xrayTunnelTraffic: '隧道流量',
+  xrayTunnelNote: 'Caddy 隧道 node1，通道重连会清零、按快照差分累计',
   lastReport: '最后报告',
   cpuUsage: 'CPU 使用率',
   gpuInfo: 'GPU 信息',

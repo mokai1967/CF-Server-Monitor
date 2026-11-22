@@ -79,6 +79,8 @@ export default {
   xrayMonthlyUsed: 'Terpakai bulan ini',
   xrayOverQuota: 'Melewati batas',
   xrayMonthlyScope: 'Total keluar bulanan NIC (semua protokol, dihitung sejak vnStat dipasang)',
+  xrayTunnelTraffic: 'Lalu lintas terowongan',
+  xrayTunnelNote: 'Terowongan Caddy node1; penghitung direset saat kanal tersambung ulang, diakumulasi dari selisih snapshot',
   lastReport: 'Laporan Terakhir',
   cpuUsage: 'Penggunaan CPU',
   gpuInfo: 'Info GPU',

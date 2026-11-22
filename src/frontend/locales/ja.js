@@ -79,6 +79,8 @@ export default {
   xrayMonthlyUsed: '今月の使用量',
   xrayOverQuota: '上限超過',
   xrayMonthlyScope: 'NIC の当月送信総量（全プロトコル、vnStat 導入時から計測）',
+  xrayTunnelTraffic: 'トンネル流量',
+  xrayTunnelNote: 'Caddy トンネル node1、チャネル再接続でカウンターはリセット、スナップショット差分で累計',
   lastReport: '最終レポート',
   cpuUsage: 'CPU 使用率',
   gpuInfo: 'GPU 情報',

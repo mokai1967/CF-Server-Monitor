@@ -79,6 +79,8 @@ export default {
   xrayMonthlyUsed: 'Usado este mes',
   xrayOverQuota: 'Cuota superada',
   xrayMonthlyScope: 'Total de salida mensual de la NIC (todos los protocolos, desde la instalación de vnStat)',
+  xrayTunnelTraffic: 'Tráfico del túnel',
+  xrayTunnelNote: 'Túnel Caddy node1; los contadores se reinician al reconectar un canal, acumulado por diferencia de instantáneas',
   lastReport: 'Último reporte',
   cpuUsage: 'Uso de CPU',
   gpuInfo: 'Info de GPU',
