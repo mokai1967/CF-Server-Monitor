@@ -400,6 +400,12 @@ export const fetchAllHistory = async (id, hours, apiIndex = 0) => {
   return Array.isArray(result.data) ? result.data : []
 }
 
+export const fetchXrayStats = async (id, hours = 24, apiIndex = 0) => {
+  const result = await http.getByIndex(`/api/xray-stats?id=${id}&hours=${hours}`, apiIndex)
+  if (result.error) return null
+  return result.data || null
+}
+
 export const adminApi = async (data, apiIndex = 0) => {
   const result = await http.postByIndex('/admin/api', data, apiIndex)
   return result

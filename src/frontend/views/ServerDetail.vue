@@ -166,6 +166,55 @@
         </div>
       </div>
 
+      <div class="chart-card" v-show="xrayLoaded">
+        <div class="chart-card-header">
+          <span class="chart-title">
+            <span class="chart-title-icon">▸</span>
+            {{ trans.xrayProxyTraffic || '代理流量 · Xray' }}
+          </span>
+          <div class="chart-header-actions">
+            <div class="net-indicator">
+              <span class="net-down">▼ <b>{{ formatBytes(xrayStats?.total_down || 0) }}</b></span>
+              <span class="net-up">▲ <b>{{ formatBytes(xrayStats?.total_up || 0) }}</b></span>
+            </div>
+          </div>
+        </div>
+        <div class="chart-body xray-body">
+          <template v-if="xrayStats">
+            <div class="xray-stats-row">
+              <div class="xray-stat">
+                <div class="xray-stat-label">{{ trans.xraySession || '本次会话' }} · {{ trans.xrayDownlink || '下行' }}</div>
+                <div class="xray-stat-value net-down">{{ formatBytes(xrayStats.latest?.downlink || 0) }}</div>
+              </div>
+              <div class="xray-stat">
+                <div class="xray-stat-label">{{ trans.xraySession || '本次会话' }} · {{ trans.xrayUplink || '上行' }}</div>
+                <div class="xray-stat-value net-up">{{ formatBytes(xrayStats.latest?.uplink || 0) }}</div>
+              </div>
+              <div class="xray-stat">
+                <div class="xray-stat-label">{{ trans.xrayWindowTotal || '区间累计' }} · {{ trans.xrayDownlink || '下行' }}</div>
+                <div class="xray-stat-value net-down">{{ formatBytes(xrayStats.total_down || 0) }}</div>
+              </div>
+              <div class="xray-stat">
+                <div class="xray-stat-label">{{ trans.xrayWindowTotal || '区间累计' }} · {{ trans.xrayUplink || '上行' }}</div>
+                <div class="xray-stat-value net-up">{{ formatBytes(xrayStats.total_up || 0) }}</div>
+              </div>
+            </div>
+            <div class="xray-bars" v-if="xrayHourlyBars.length > 0">
+              <div
+                v-for="bar in xrayHourlyBars"
+                :key="bar.ts"
+                class="xray-bar"
+                :style="{ height: bar.height + '%' }"
+                :title="`${bar.label} · ↓ ${formatBytes(bar.down)} / ↑ ${formatBytes(bar.up)}`"
+              ></div>
+            </div>
+            <div class="xray-note" v-if="xrayHourlyBars.length === 0">{{ trans.xrayNoData || '暂无代理流量数据' }}</div>
+            <div class="xray-note">{{ trans.xrayResetNote || '' }}<span v-if="xrayUpdatedText"> · {{ xrayUpdatedText }}</span></div>
+          </template>
+          <div class="xray-note" v-else>{{ trans.xrayNoData || '暂无代理流量数据' }}</div>
+        </div>
+      </div>
+
       <div class="chart-card" :class="{ 'full-width': isChartExpanded('load') }">
         <div class="chart-card-header">
           <span class="chart-title">
@@ -402,7 +451,7 @@ import TerminalHeader from '../components/TerminalHeader.vue'
 import Footer from '../components/Footer.vue'
 import OsIcon from '../components/OsIcon.vue'
 import LiveConnectionTimeoutModal from '../components/LiveConnectionTimeoutModal.vue'
-import { fetchServerDetail, fetchAllHistory, fetchConfig, formatBytes, createLiveSocket, getFlagRegionCode, isServerOnline, normalizeLiveSocketTimeoutMinutes } from '../utils/api.js'
+import { fetchServerDetail, fetchAllHistory, fetchXrayStats, fetchConfig, formatBytes, createLiveSocket, getFlagRegionCode, isServerOnline, normalizeLiveSocketTimeoutMinutes } from '../utils/api.js'
 import { isAdminLoggedIn } from '../utils/http'
 import { getTrafficUsageBytes } from '../composables/useServerCardData'
 import { getPublicAssetUrl } from '../utils/config.js'
@@ -1358,6 +1407,42 @@ const clearDiskIoChart = () => {
   chart.update('none')
 }
 
+// ---- Xray 代理流量（VLESS + Trojan，用户 paul）----
+const xrayStats = ref(null)
+const xrayLoaded = ref(false)
+let xrayRefreshTimer = null
+
+const loadXrayStats = async () => {
+  try {
+    const data = await fetchXrayStats(serverId, currentHours.value, apiIndex.value)
+    if (data) {
+      xrayStats.value = data
+      xrayLoaded.value = true
+    }
+  } catch (e) {
+    // 统计接口不可用时不影响主面板
+  }
+}
+
+const xrayHourlyBars = computed(() => {
+  const hourly = Array.isArray(xrayStats.value?.hourly) ? xrayStats.value.hourly : []
+  const max = hourly.reduce((m, h) => Math.max(m, (h.up || 0) + (h.down || 0)), 0)
+  return hourly.map(h => ({
+    ts: h.ts,
+    up: h.up || 0,
+    down: h.down || 0,
+    total: (h.up || 0) + (h.down || 0),
+    height: max > 0 ? Math.max(4, Math.round(((h.up || 0) + (h.down || 0)) / max * 100)) : 0,
+    label: new Date(h.ts * 1000).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+  }))
+})
+
+const xrayUpdatedText = computed(() => {
+  const ts = xrayStats.value?.latest?.ts
+  if (!ts) return ''
+  return new Date(ts * 1000).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })
+})
+
 const loadAllHistory = async (hours) => {
   try {
     const allData = await fetchAllHistory(serverId, hours, apiIndex.value)
@@ -1803,6 +1888,7 @@ const setTimeRange = (hours) => {
   }
   currentHours.value = hours
   loadAllHistory(hours)
+  loadXrayStats()
 }
 
 const goToLogin = () => {
@@ -1903,6 +1989,8 @@ const init = async () => {
   await initChartsOnMount()
 
   await loadAllHistory(currentHours.value)
+  loadXrayStats()
+  xrayRefreshTimer = setInterval(loadXrayStats, 5 * 60 * 1000)
   replayLatestReportUpdates(initialData)
 
   liveSocket = createLiveSocket(String(serverId), {
@@ -1931,6 +2019,7 @@ onMounted(() => {
 onUnmounted(() => {
   document.removeEventListener('visibilitychange', handleVisibility)
   if (liveSocket) liveSocket.close()
+  if (xrayRefreshTimer) clearInterval(xrayRefreshTimer)
   clearLatestReportReplayTimers()
   lastGpuSignature = ''
   safeDestroyCharts()

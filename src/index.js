@@ -5,6 +5,7 @@ import { handleAdminAPI } from './handlers/admin.js';
 import { serveFrontend } from './handlers/frontend.js';
 import { handleUpdate, handleWebSocketUpgrade, handleUpdateWebSocketUpgrade } from './handlers/update.js';
 import { handleServerAPI, handleServersAPI } from './handlers/dashboard.js';
+import { handleXrayStatsGet, handleXrayStatsPost } from './handlers/xrayStats.js';
 import { handleTheme } from './handlers/theme.js';
 import { isValidThemeOptions, loadSettings, loadSiteSettings, loadAppearanceOptions, normalizeFrontendWsTimeoutMinutes, normalizeLongHistoryPoints, saveThemeOptions, setDebug, debug } from './utils/settings.js';
 import { omitNullLossProbeFields } from './handlers/dashboard.js';
@@ -400,6 +401,11 @@ export default {
       { method: 'GET', path: '/api/servers', handler: async () => {
         await ensureFullSettings();
         return handleServersAPI(request, env, sys);
+      }},
+      { method: 'POST', path: '/api/xray-stats', handler: async () => handleXrayStatsPost(request, env) },
+      { method: 'GET', path: '/api/xray-stats', handler: async () => {
+        await ensureSiteSettings();
+        return handleXrayStatsGet(request, env, sys);
       }},
       { method: 'GET', path: '/api/ws', handler: async () => handleWebSocketUpgrade(request, env) },
 

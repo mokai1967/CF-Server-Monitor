@@ -3330,6 +3330,52 @@ body::before {
     height: 280px !important;
 }
 
+/* Xray 代理流量卡片 */
+.xray-body {
+    padding: 16px 18px;
+}
+
+.xray-stats-row {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 12px;
+    margin-bottom: 14px;
+}
+
+.xray-stat-label {
+    font-size: 12px;
+    color: var(--text-muted);
+    margin-bottom: 4px;
+}
+
+.xray-stat-value {
+    font-size: 17px;
+    font-weight: 700;
+}
+
+.xray-bars {
+    display: flex;
+    align-items: flex-end;
+    gap: 3px;
+    height: 64px;
+    padding: 4px 2px 0;
+    border-top: 1px solid var(--border-color);
+}
+
+.xray-bar {
+    flex: 1;
+    min-width: 4px;
+    background: var(--accent-cyan);
+    border-radius: 2px 2px 0 0;
+    opacity: 0.75;
+}
+
+.xray-note {
+    margin-top: 10px;
+    font-size: 12px;
+    color: var(--text-muted);
+}
+
 /* --------------------------------------------------------------------------
    27. Map Container
    -------------------------------------------------------------------------- */
