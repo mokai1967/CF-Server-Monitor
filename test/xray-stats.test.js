@@ -146,6 +146,81 @@ test('xray stats: tunnel counters accumulate by diff and expose latest session',
   }
 });
 
+test('xray stats: per-user monthly totals and iphone quota', async () => {
+  const miniflare = createMiniflare();
+  try {
+    const db = await miniflare.getD1Database('DB');
+    await seedServer(db);
+    clearAllCaches();
+    const env = { DB: db, API_SECRET: SECRET };
+    const sys = { is_public: 'true' };
+
+    const nowSec = Math.floor(Date.now() / 1000);
+    const d = new Date(nowSec * 1000);
+    const mStart = Math.floor(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), 1) / 1000);
+    const snap = async (ts, up, down, ipUp, ipDown) => {
+      const body = { id: SERVER_ID, secret: SECRET, uplink: up, downlink: down, ts };
+      if (ipUp != null) body.iphone_up = ipUp;
+      if (ipDown != null) body.iphone_down = ipDown;
+      const r = await handleXrayStatsPost(postRequest(body), env);
+      assert.equal(r.status, 200);
+    };
+
+    // 月初前基线（带 iPhone 值）
+    await snap(mStart - 3600, 10000, 20000, 1000, 2000);
+    // 月内：正常增长、一次重启回落、再增长
+    await snap(mStart + 3600, 11000, 22000, 1500, 3000); // mac +1000/+2000, iphone +500/+1000
+    await snap(mStart + 7200, 500, 800, 200, 300);       // 重启：mac +500/+800, iphone +200/+300
+    await snap(mStart + 10800, 1500, 2800, 1200, 2300);  // mac +1000/+2000, iphone +1000/+2000
+
+    const getRes = await handleXrayStatsGet(
+      new Request(`http://localhost/api/xray-stats?id=${SERVER_ID}&hours=24`),
+      env, sys
+    );
+    assert.equal(getRes.status, 200);
+    const data = await getRes.json();
+
+    // Mac（paul）月累计：up 2500，down 4800
+    assert.deepEqual(data.users.mac, { up: 2500, down: 4800 });
+    // iPhone 月累计：up 1700，down 3300，合计 5000
+    assert.deepEqual(data.users.iphone, { up: 1700, down: 3300 });
+    assert.equal(data.iphone_quota, 10737418240);
+    assert.equal(data.iphone_used_percent, 0);
+    assert.equal(data.iphone_over_quota, false);
+  } finally {
+    await miniflare.dispose();
+  }
+});
+
+test('xray stats: users.iphone is null before any iphone snapshot', async () => {
+  const miniflare = createMiniflare();
+  try {
+    const db = await miniflare.getD1Database('DB');
+    await seedServer(db);
+    clearAllCaches();
+    const env = { DB: db, API_SECRET: SECRET };
+    const sys = { is_public: 'true' };
+
+    const nowSec = Math.floor(Date.now() / 1000);
+    const r = await handleXrayStatsPost(postRequest({
+      id: SERVER_ID, secret: SECRET, uplink: 100, downlink: 200, ts: nowSec - 60
+    }), env);
+    assert.equal(r.status, 200);
+
+    const getRes = await handleXrayStatsGet(
+      new Request(`http://localhost/api/xray-stats?id=${SERVER_ID}&hours=24`),
+      env, sys
+    );
+    assert.equal(getRes.status, 200);
+    const data = await getRes.json();
+    assert.deepEqual(data.users.mac, { up: 0, down: 0 });
+    assert.equal(data.users.iphone, null);
+    assert.equal(data.iphone_over_quota, false);
+  } finally {
+    await miniflare.dispose();
+  }
+});
+
 test('xray stats: tunnel fields are null before any tunnel snapshot', async () => {
   const miniflare = createMiniflare();
   try {

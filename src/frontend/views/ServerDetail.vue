@@ -210,6 +210,17 @@
               </div>
             </div>
             <div class="xray-note" v-if="xrayStats.device_count != null || xrayStats.monthly_tx != null">{{ trans.xrayDevicesNote || '' }}<span v-if="xrayStats.monthly_tx != null"> · {{ trans.xrayMonthlyScope || '' }}</span></div>
+            <div class="xray-stats-row two-col" v-if="xrayStats.users">
+              <div class="xray-stat">
+                <div class="xray-stat-label">{{ trans.xrayDeviceMac || 'Mac' }} · {{ trans.xrayMonthlyUsed || '本月已用' }}</div>
+                <div class="xray-stat-value">↓ {{ formatBytes(xrayStats.users.mac.down || 0) }} / ↑ {{ formatBytes(xrayStats.users.mac.up || 0) }}</div>
+              </div>
+              <div class="xray-stat" v-if="xrayStats.users.iphone">
+                <div class="xray-stat-label">{{ trans.xrayDeviceIphone || 'iPhone' }} · {{ trans.xrayMonthlyUsed || '本月已用' }}</div>
+                <div class="xray-stat-value" :class="iphoneQuotaClass">{{ formatBytes((xrayStats.users.iphone.down || 0) + (xrayStats.users.iphone.up || 0)) }} / 10 GB（{{ xrayStats.iphone_used_percent }}%）<span v-if="xrayStats.iphone_over_quota"> · {{ trans.xrayOverQuota || '已超上限' }}</span></div>
+              </div>
+            </div>
+            <div class="xray-note" v-if="xrayStats.users && xrayStats.users.iphone">{{ trans.xrayUsersNote || '' }}</div>
             <div class="xray-stats-row" v-if="xrayStats.tunnel_latest || xrayStats.tunnel_down != null">
               <div class="xray-stat" v-if="xrayStats.tunnel_latest">
                 <div class="xray-stat-label">{{ trans.xrayTunnelTraffic || '隧道流量' }} · {{ trans.xraySession || '本次会话' }} · {{ trans.xrayDownlink || '下行' }}</div>
@@ -1478,6 +1489,14 @@ const monthlyQuotaClass = computed(() => {
   const pct = xrayStats.value?.used_percent
   if (pct == null) return ''
   if (xrayStats.value?.over_quota || pct > 100) return 'xray-quota-over'
+  if (pct > 80) return 'xray-quota-warn'
+  return ''
+})
+
+const iphoneQuotaClass = computed(() => {
+  const pct = xrayStats.value?.iphone_used_percent
+  if (pct == null) return ''
+  if (xrayStats.value?.iphone_over_quota || pct > 100) return 'xray-quota-over'
   if (pct > 80) return 'xray-quota-warn'
   return ''
 })

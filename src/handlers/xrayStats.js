@@ -18,6 +18,11 @@
  *   bytes_out（当前通道累计字节；通道重连会清零）。与 Xray 计数器一样，
  *   这里只存原始快照，区间用量由读取时对相邻快照求正向差分累计得到
  *   （数值回落视为通道重连，回落后的新值按重连后新增用量计入）。
+ *
+ * 按设备分开统计（2026-11-23 起）：Xray 有两个用户，paul = Mac，
+ * iphone = iPhone。uplink / downlink 沿用 paul 的计数（Mac）；侧车另报
+ * iphone_up / iphone_down。GET 返回两用户各自的自然月累计（UTC 自然月），
+ * 以及 iPhone 的 10 GiB 月上限与使用比例。
  */
 import { createSuccessResponse, createBadRequestResponse, createUnauthorizedResponse, createNotFoundResponse } from '../utils/errors.js';
 import { checkAuth, hasAppPasswordAccess, simpleAuthResponse } from '../middleware/auth.js';
@@ -25,6 +30,15 @@ import { getServerDetail } from '../utils/cache.js';
 
 // 订阅总流量上限：1 TiB / 自然月
 export const MONTHLY_QUOTA_BYTES = 1099511627776;
+
+// iPhone 用户月上限：10 GiB（上行+下行合计）/ 自然月
+export const IPHONE_QUOTA_BYTES = 10737418240;
+
+// 自然月起始（UTC）：当月 1 号 00:00:00
+function monthStartSec(nowSec) {
+  const d = new Date(nowSec * 1000);
+  return Math.floor(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), 1) / 1000);
+}
 
 export async function ensureXrayStatsTable(db) {
   await db.prepare(`
@@ -37,7 +51,8 @@ export async function ensureXrayStatsTable(db) {
     )
   `).run();
   // 2026-11-23 新增列：在线设备数、月出站总量、隧道流量。老表用 ALTER 补列。
-  for (const col of ['device_count INTEGER', 'monthly_tx INTEGER', 'tunnel_up INTEGER', 'tunnel_down INTEGER']) {
+  // 2026-11-23 新增列：iPhone 用户计数器（按设备分开统计）。
+  for (const col of ['device_count INTEGER', 'monthly_tx INTEGER', 'tunnel_up INTEGER', 'tunnel_down INTEGER', 'iphone_up INTEGER', 'iphone_down INTEGER']) {
     try {
       await db.prepare(`ALTER TABLE xray_stats ADD COLUMN ${col}`).run();
     } catch (_) {
@@ -54,10 +69,11 @@ function normalizeSnapshotTs(value) {
 }
 
 // POST /api/xray-stats
-// body: { id, secret, uplink, downlink, ts?, device_count?, monthly_tx?, tunnel_up?, tunnel_down? }
+// body: { id, secret, uplink, downlink, ts?, device_count?, monthly_tx?, tunnel_up?, tunnel_down?, iphone_up?, iphone_down? }
 // （ts 为秒或毫秒时间戳，缺省用服务端时间；device_count / monthly_tx 为
 // 可选的最新值语义字段，缺省时不覆盖已有值；tunnel_up / tunnel_down 为
-// 可选的隧道通道累计计数器，缺省时存 NULL）
+// 可选的隧道通道累计计数器，缺省时存 NULL；iphone_up / iphone_down 为
+// 可选的 iPhone 用户累计计数器，缺省时存 NULL）
 export async function handleXrayStatsPost(request, env) {
   let data;
   try {
@@ -80,6 +96,8 @@ export async function handleXrayStatsPost(request, env) {
   const monthlyTx = data.monthly_tx == null ? null : Math.max(0, Math.floor(Number(data.monthly_tx) || 0));
   const tunnelUp = data.tunnel_up == null ? null : Math.max(0, Math.floor(Number(data.tunnel_up) || 0));
   const tunnelDown = data.tunnel_down == null ? null : Math.max(0, Math.floor(Number(data.tunnel_down) || 0));
+  const iphoneUp = data.iphone_up == null ? null : Math.max(0, Math.floor(Number(data.iphone_up) || 0));
+  const iphoneDown = data.iphone_down == null ? null : Math.max(0, Math.floor(Number(data.iphone_down) || 0));
 
   await ensureXrayStatsTable(env.DB);
 
@@ -87,8 +105,8 @@ export async function handleXrayStatsPost(request, env) {
   if (!server) return createNotFoundResponse('Server not found');
 
   await env.DB.prepare(
-    'INSERT OR REPLACE INTO xray_stats (server_id, ts, uplink, downlink, device_count, monthly_tx, tunnel_up, tunnel_down) VALUES (?, ?, ?, ?, ?, ?, ?, ?)'
-  ).bind(serverId, ts, uplink, downlink, deviceCount, monthlyTx, tunnelUp, tunnelDown).run();
+    'INSERT OR REPLACE INTO xray_stats (server_id, ts, uplink, downlink, device_count, monthly_tx, tunnel_up, tunnel_down, iphone_up, iphone_down) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'
+  ).bind(serverId, ts, uplink, downlink, deviceCount, monthlyTx, tunnelUp, tunnelDown, iphoneUp, iphoneDown).run();
 
   return createSuccessResponse({ ok: true, ts });
 }
@@ -172,6 +190,36 @@ export async function handleXrayStatsGet(request, env, sys) {
   ).bind(serverId).first();
   const tunnelLatest = latestTunnel ? { ts: latestTunnel.ts, up: latestTunnel.tunnel_up, down: latestTunnel.tunnel_down } : null;
 
+  // 按设备分开的自然月累计（UTC 自然月）：Mac = paul 的 uplink/downlink，
+  // iPhone = iphone_up/iphone_down。计数器重启会清零，用正向差分累计，
+  // 与区间累计同一逻辑；缺 iPhone 值的快照对不计入 iPhone。
+  const mStart = monthStartSec(nowSec);
+  const mBaseline = await env.DB.prepare(
+    'SELECT ts, uplink, downlink, iphone_up, iphone_down FROM xray_stats WHERE server_id = ? AND ts < ? ORDER BY ts DESC LIMIT 1'
+  ).bind(serverId, mStart).first();
+  const mRows = await env.DB.prepare(
+    'SELECT ts, uplink, downlink, iphone_up, iphone_down FROM xray_stats WHERE server_id = ? AND ts >= ? ORDER BY ts ASC LIMIT 5000'
+  ).bind(serverId, mStart).all();
+  const mSnaps = Array.isArray(mRows?.results) ? mRows.results : [];
+  let macUp = 0, macDown = 0, iphoneUp = 0, iphoneDown = 0, hasIphone = false;
+  if (mBaseline && mBaseline.iphone_up != null && mBaseline.iphone_down != null) hasIphone = true;
+  let mPrev = mBaseline || null;
+  for (const s of mSnaps) {
+    if (s.iphone_up != null && s.iphone_down != null) hasIphone = true;
+    if (mPrev) {
+      macUp += s.uplink >= mPrev.uplink ? s.uplink - mPrev.uplink : s.uplink;
+      macDown += s.downlink >= mPrev.downlink ? s.downlink - mPrev.downlink : s.downlink;
+      if (mPrev.iphone_up != null && mPrev.iphone_down != null && s.iphone_up != null && s.iphone_down != null) {
+        iphoneUp += s.iphone_up >= mPrev.iphone_up ? s.iphone_up - mPrev.iphone_up : s.iphone_up;
+        iphoneDown += s.iphone_down >= mPrev.iphone_down ? s.iphone_down - mPrev.iphone_down : s.iphone_down;
+      }
+    }
+    mPrev = s;
+  }
+  const iphoneTotal = iphoneUp + iphoneDown;
+  const iphoneUsedPercent = +(iphoneTotal / IPHONE_QUOTA_BYTES * 100).toFixed(1);
+  const iphoneOverQuota = iphoneTotal > IPHONE_QUOTA_BYTES;
+
   return createSuccessResponse({
     server_id: serverId,
     hours,
@@ -187,6 +235,13 @@ export async function handleXrayStatsGet(request, env, sys) {
     over_quota: overQuota,
     tunnel_up: tunnelLatest ? tunnelTotalUp : null,
     tunnel_down: tunnelLatest ? tunnelTotalDown : null,
-    tunnel_latest: tunnelLatest
+    tunnel_latest: tunnelLatest,
+    users: {
+      mac: { up: macUp, down: macDown },
+      iphone: hasIphone ? { up: iphoneUp, down: iphoneDown } : null
+    },
+    iphone_quota: IPHONE_QUOTA_BYTES,
+    iphone_used_percent: iphoneUsedPercent,
+    iphone_over_quota: iphoneOverQuota
   });
 }
