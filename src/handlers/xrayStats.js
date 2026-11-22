@@ -6,10 +6,19 @@
  * Xray 计数器在 Xray 重启后清零，因此这里只存原始快照，
  * 区间用量由读取时对相邻快照求正向差分累计得到（数值回落视为重启，
  * 回落后的新值按重启后新增用量计入）。
+ *
+ * 侧车同时上报两个附加字段（2026-11-23 起）：
+ * - device_count：最近 5 分钟内 Xray 访问日志里出现过的不同来源 IP 数
+ *   （近似值；VLESS 经 Caddy 转发只算 1 台，见侧车脚本注释）。
+ * - monthly_tx：vnStat 当月网卡出站总量（字节），覆盖全部 5 个协议。
+ * 两者都是“最新值”语义（非累计计数器），读取时取最新一条非空快照。
  */
 import { createSuccessResponse, createBadRequestResponse, createUnauthorizedResponse, createNotFoundResponse } from '../utils/errors.js';
 import { checkAuth, hasAppPasswordAccess, simpleAuthResponse } from '../middleware/auth.js';
 import { getServerDetail } from '../utils/cache.js';
+
+// 订阅总流量上限：1 TiB / 自然月
+export const MONTHLY_QUOTA_BYTES = 1099511627776;
 
 export async function ensureXrayStatsTable(db) {
   await db.prepare(`
@@ -21,6 +30,14 @@ export async function ensureXrayStatsTable(db) {
       PRIMARY KEY (server_id, ts)
     )
   `).run();
+  // 2026-11-23 新增列：在线设备数、月出站总量。老表用 ALTER 补列。
+  for (const col of ['device_count INTEGER', 'monthly_tx INTEGER']) {
+    try {
+      await db.prepare(`ALTER TABLE xray_stats ADD COLUMN ${col}`).run();
+    } catch (_) {
+      // 列已存在，忽略
+    }
+  }
 }
 
 function normalizeSnapshotTs(value) {
@@ -31,7 +48,9 @@ function normalizeSnapshotTs(value) {
 }
 
 // POST /api/xray-stats
-// body: { id, secret, uplink, downlink, ts? }（ts 为秒或毫秒时间戳，缺省用服务端时间）
+// body: { id, secret, uplink, downlink, ts?, device_count?, monthly_tx? }
+// （ts 为秒或毫秒时间戳，缺省用服务端时间；device_count / monthly_tx 为
+// 可选的最新值语义字段，缺省时不覆盖已有值）
 export async function handleXrayStatsPost(request, env) {
   let data;
   try {
@@ -50,6 +69,8 @@ export async function handleXrayStatsPost(request, env) {
   const uplink = Math.max(0, Math.floor(Number(data.uplink) || 0));
   const downlink = Math.max(0, Math.floor(Number(data.downlink) || 0));
   const ts = normalizeSnapshotTs(data.ts);
+  const deviceCount = data.device_count == null ? null : Math.max(0, Math.floor(Number(data.device_count) || 0));
+  const monthlyTx = data.monthly_tx == null ? null : Math.max(0, Math.floor(Number(data.monthly_tx) || 0));
 
   await ensureXrayStatsTable(env.DB);
 
@@ -57,8 +78,8 @@ export async function handleXrayStatsPost(request, env) {
   if (!server) return createNotFoundResponse('Server not found');
 
   await env.DB.prepare(
-    'INSERT OR REPLACE INTO xray_stats (server_id, ts, uplink, downlink) VALUES (?, ?, ?, ?)'
-  ).bind(serverId, ts, uplink, downlink).run();
+    'INSERT OR REPLACE INTO xray_stats (server_id, ts, uplink, downlink, device_count, monthly_tx) VALUES (?, ?, ?, ?, ?, ?)'
+  ).bind(serverId, ts, uplink, downlink, deviceCount, monthlyTx).run();
 
   return createSuccessResponse({ ok: true, ts });
 }
@@ -117,6 +138,17 @@ export async function handleXrayStatsGet(request, env, sys) {
 
   const latest = snaps.length > 0 ? snaps[snaps.length - 1] : (baseline || null);
 
+  // 附加字段取最新一条非空快照（最新值语义；侧车某次算不出时不覆盖旧值）
+  const latestDevice = await env.DB.prepare(
+    'SELECT device_count FROM xray_stats WHERE server_id = ? AND device_count IS NOT NULL ORDER BY ts DESC LIMIT 1'
+  ).bind(serverId).first();
+  const latestMonthly = await env.DB.prepare(
+    'SELECT monthly_tx FROM xray_stats WHERE server_id = ? AND monthly_tx IS NOT NULL ORDER BY ts DESC LIMIT 1'
+  ).bind(serverId).first();
+  const monthlyTx = latestMonthly?.monthly_tx ?? null;
+  const usedPercent = monthlyTx == null ? 0 : +(monthlyTx / MONTHLY_QUOTA_BYTES * 100).toFixed(1);
+  const overQuota = monthlyTx != null && monthlyTx > MONTHLY_QUOTA_BYTES;
+
   return createSuccessResponse({
     server_id: serverId,
     hours,
@@ -124,6 +156,11 @@ export async function handleXrayStatsGet(request, env, sys) {
     total_up: totalUp,
     total_down: totalDown,
     samples: snaps.length,
-    hourly: [...hourlyMap.values()].sort((a, b) => a.ts - b.ts)
+    hourly: [...hourlyMap.values()].sort((a, b) => a.ts - b.ts),
+    device_count: latestDevice?.device_count ?? null,
+    monthly_tx: monthlyTx,
+    quota: MONTHLY_QUOTA_BYTES,
+    used_percent: usedPercent,
+    over_quota: overQuota
   });
 }

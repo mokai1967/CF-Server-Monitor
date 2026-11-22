@@ -199,6 +199,17 @@
                 <div class="xray-stat-value net-up">{{ formatBytes(xrayStats.total_up || 0) }}</div>
               </div>
             </div>
+            <div class="xray-stats-row two-col">
+              <div class="xray-stat" v-if="xrayStats.device_count != null">
+                <div class="xray-stat-label">{{ trans.xrayOnlineDevices || '在线设备' }} · {{ trans.xrayDevicesEstimate || '按最近 5 分钟不同 IP 估算' }}</div>
+                <div class="xray-stat-value">{{ xrayStats.device_count }} {{ trans.xrayDevicesUnit || '台' }}</div>
+              </div>
+              <div class="xray-stat" v-if="xrayStats.monthly_tx != null">
+                <div class="xray-stat-label">{{ trans.xrayMonthlyUsed || '本月已用' }}</div>
+                <div class="xray-stat-value" :class="monthlyQuotaClass">{{ formatBytes(xrayStats.monthly_tx) }} / 1024 GB（{{ xrayStats.used_percent }}%）<span v-if="xrayStats.over_quota"> · {{ trans.xrayOverQuota || '已超上限' }}</span></div>
+              </div>
+            </div>
+            <div class="xray-note" v-if="xrayStats.device_count != null || xrayStats.monthly_tx != null">{{ trans.xrayDevicesNote || '' }}<span v-if="xrayStats.monthly_tx != null"> · {{ trans.xrayMonthlyScope || '' }}</span></div>
             <div class="xray-bars" v-if="xrayHourlyBars.length > 0">
               <div
                 v-for="bar in xrayHourlyBars"
@@ -1441,6 +1452,15 @@ const xrayUpdatedText = computed(() => {
   const ts = xrayStats.value?.latest?.ts
   if (!ts) return ''
   return new Date(ts * 1000).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })
+})
+
+// 月流量上限 1TB：超 80% 变黄，超 100% 变红
+const monthlyQuotaClass = computed(() => {
+  const pct = xrayStats.value?.used_percent
+  if (pct == null) return ''
+  if (xrayStats.value?.over_quota || pct > 100) return 'xray-quota-over'
+  if (pct > 80) return 'xray-quota-warn'
+  return ''
 })
 
 const loadAllHistory = async (hours) => {

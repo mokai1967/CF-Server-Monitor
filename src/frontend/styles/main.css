@@ -3370,6 +3370,18 @@ body::before {
     opacity: 0.75;
 }
 
+.xray-stats-row.two-col {
+    grid-template-columns: repeat(2, 1fr);
+}
+
+.xray-quota-warn {
+    color: #d97706;
+}
+
+.xray-quota-over {
+    color: #dc2626;
+}
+
 .xray-note {
     margin-top: 10px;
     font-size: 12px;
