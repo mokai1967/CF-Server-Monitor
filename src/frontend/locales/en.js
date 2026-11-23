@@ -70,6 +70,7 @@ export default {
   xrayWindowTotal: 'Period total',
   xrayTodayTotal: 'Today total',
   xrayMonthTotal: 'This month total',
+  xrayTodayTotalCombined: 'Today total',
   xrayDownlink: 'Down',
   xrayUplink: 'Up',
   xrayNoData: 'No proxy traffic data yet',

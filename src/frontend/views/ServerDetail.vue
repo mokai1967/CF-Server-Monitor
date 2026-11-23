@@ -274,6 +274,16 @@
                 <div class="xray-stat-value net-up">{{ formatBytes(xrayStats.tunnel_month_up || 0) }}</div>
               </div>
             </div>
+            <div class="xray-stats-row" v-if="xrayStats.today_total_down != null || xrayStats.today_total_up != null">
+              <div class="xray-stat" v-if="xrayStats.today_total_down != null">
+                <div class="xray-stat-label">{{ trans.xrayTodayTotalCombined || '今日总计' }} · {{ trans.xrayDownlink || '下行' }}</div>
+                <div class="xray-stat-value net-down">{{ formatBytes(xrayStats.today_total_down || 0) }}</div>
+              </div>
+              <div class="xray-stat" v-if="xrayStats.today_total_up != null">
+                <div class="xray-stat-label">{{ trans.xrayTodayTotalCombined || '今日总计' }} · {{ trans.xrayUplink || '上行' }}</div>
+                <div class="xray-stat-value net-up">{{ formatBytes(xrayStats.today_total_up || 0) }}</div>
+              </div>
+            </div>
             <div class="xray-note" v-if="xrayStats.tunnel_latest || xrayStats.tunnel_down != null">{{ trans.xrayTunnelNote || '' }}</div>
             <div class="xray-bars" v-if="xrayHourlyBars.length > 0 && xrayHourlyBars.some(b => b.total > 0)">
               <div

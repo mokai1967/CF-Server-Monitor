@@ -24,6 +24,12 @@
  * iphone_up / iphone_down。GET 返回两用户各自的自然月累计（UTC 自然月），
  * 以及 iPhone 的 10 GiB 月上限与使用比例。
  *
+ * 当天流量总计（2026-11-23 起）：today_total_up / today_total_down =
+ * 隧道当天累计 + Xray 当天累计（上下行分开，Xray 按用户合计 Mac + iPhone），
+ * 当天按东八区 00:00 起算，与隧道当天累计同一套正向差分方法；
+ * 没有任何快照数据时返回 null。它是单独一行汇总，不混入 Xray 柱条
+ * 或 Xray 合计的口径。
+ *
  * 分协议统计（2026-11-23 起）：nftables 按端口+协议计字节，侧车每 5 分钟
  * 上报 8 个累计计数器（proto_hy2_in/out、proto_tuic_in/out、
  * proto_anytls_in/out、proto_trojan_in/out）。计数器在 nft 规则重建后
@@ -76,6 +82,35 @@ async function tunnelCumulative(db, serverId, startSec) {
     if (prev && prev.tunnel_up != null && prev.tunnel_down != null && s.tunnel_up != null && s.tunnel_down != null) {
       up += s.tunnel_up >= prev.tunnel_up ? s.tunnel_up - prev.tunnel_up : s.tunnel_up;
       down += s.tunnel_down >= prev.tunnel_down ? s.tunnel_down - prev.tunnel_down : s.tunnel_down;
+    }
+    prev = s;
+  }
+  return { up, down };
+}
+
+// Xray 当天累计（东八区日边界，正向差分）：Mac 用 uplink/downlink（恒有值），
+// iPhone 用 iphone_up/iphone_down（缺值时该对快照不计入 iPhone）。
+// 计数器回落按 Xray 重启清零处理；与隧道当天累计同一逻辑。
+// 用于 today_total（隧道当天 + Xray 当天）的 Xray 部分。
+async function xrayCumulative(db, serverId, startSec) {
+  const baseline = await db.prepare(
+    'SELECT ts, uplink, downlink, iphone_up, iphone_down FROM xray_stats WHERE server_id = ? AND ts < ? ORDER BY ts DESC LIMIT 1'
+  ).bind(serverId, startSec).first();
+  const rows = await db.prepare(
+    'SELECT ts, uplink, downlink, iphone_up, iphone_down FROM xray_stats WHERE server_id = ? AND ts >= ? ORDER BY ts ASC LIMIT 5000'
+  ).bind(serverId, startSec).all();
+  const snaps = Array.isArray(rows?.results) ? rows.results : [];
+  let up = 0;
+  let down = 0;
+  let prev = baseline || null;
+  for (const s of snaps) {
+    if (prev) {
+      up += s.uplink >= prev.uplink ? s.uplink - prev.uplink : s.uplink;
+      down += s.downlink >= prev.downlink ? s.downlink - prev.downlink : s.downlink;
+      if (prev.iphone_up != null && prev.iphone_down != null && s.iphone_up != null && s.iphone_down != null) {
+        up += s.iphone_up >= prev.iphone_up ? s.iphone_up - prev.iphone_up : s.iphone_up;
+        down += s.iphone_down >= prev.iphone_down ? s.iphone_down - prev.iphone_down : s.iphone_down;
+      }
     }
     prev = s;
   }
@@ -249,6 +284,15 @@ export async function handleXrayStatsGet(request, env, sys) {
   const tunnelToday = await tunnelCumulative(env.DB, serverId, shanghaiDayStartSec(nowSec));
   const tunnelMonth = await tunnelCumulative(env.DB, serverId, shanghaiMonthStartSec(nowSec));
 
+  // 当天流量总计（东八区日边界）：隧道当天累计 + Xray 当天累计（上下行分开，
+  // Xray 按用户合计 Mac + iPhone，与隧道当天同一套正向差分方法）。
+  // 与 Xray 自然月累计（UTC）是两套口径，互不干扰；没有任何快照数据时
+  // 返回 null（与隧道字段的 null 语义一致），有数据时即使当天为 0 也返回数字。
+  const xrayToday = await xrayCumulative(env.DB, serverId, shanghaiDayStartSec(nowSec));
+  const hasAnyProxyData = latest != null || tunnelLatest != null;
+  const todayTotalUp = hasAnyProxyData ? tunnelToday.up + xrayToday.up : null;
+  const todayTotalDown = hasAnyProxyData ? tunnelToday.down + xrayToday.down : null;
+
   // 按设备分开的自然月累计（UTC 自然月）：Mac = paul 的 uplink/downlink，
   // iPhone = iphone_up/iphone_down。计数器重启会清零，用正向差分累计，
   // 与区间累计同一逻辑；缺 iPhone 值的快照对不计入 iPhone。
@@ -324,6 +368,8 @@ export async function handleXrayStatsGet(request, env, sys) {
     tunnel_today_down: tunnelLatest ? tunnelToday.down : null,
     tunnel_month_up: tunnelLatest ? tunnelMonth.up : null,
     tunnel_month_down: tunnelLatest ? tunnelMonth.down : null,
+    today_total_up: todayTotalUp,
+    today_total_down: todayTotalDown,
     users: {
       mac: { up: macUp, down: macDown },
       iphone: hasIphone ? { up: iphoneUp, down: iphoneDown } : null

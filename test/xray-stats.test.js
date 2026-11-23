@@ -200,6 +200,89 @@ test('xray stats: tunnel today/month totals use Shanghai boundaries', async () =
   }
 });
 
+test('xray stats: today total combines tunnel and Xray for the Shanghai day', async () => {
+  const miniflare = createMiniflare();
+  try {
+    const db = await miniflare.getD1Database('DB');
+    await seedServer(db);
+    clearAllCaches();
+    const env = { DB: db, API_SECRET: SECRET };
+    const sys = { is_public: 'true' };
+
+    const nowSec = Math.floor(Date.now() / 1000);
+    const SHANGHAI = 8 * 3600;
+    const dayStart = Math.floor((nowSec + SHANGHAI) / 86400) * 86400 - SHANGHAI;
+    // 距东八区午夜不足 1 小时时，今日快照可能跨日，跳过以免误报
+    if (nowSec - dayStart < 3600) return;
+
+    const snap = async (ts, up, down, ipUp, ipDown, tunUp, tunDown) => {
+      const body = { id: SERVER_ID, secret: SECRET, uplink: up, downlink: down, ts };
+      if (ipUp != null) body.iphone_up = ipUp;
+      if (ipDown != null) body.iphone_down = ipDown;
+      if (tunUp != null) body.tunnel_up = tunUp;
+      if (tunDown != null) body.tunnel_down = tunDown;
+      const r = await handleXrayStatsPost(postRequest(body), env);
+      assert.equal(r.status, 200);
+    };
+
+    // 昨日基线（东八区昨日，带 Xray + iPhone + 隧道值）
+    await snap(dayStart - 3600, 10000, 20000, 1000, 2000, 5000, 10000);
+    // 今日：Xray 正常增长、一次重启回落、再增长；iPhone 同步增长；
+    // 隧道增长、一次通道重连回落、再增长
+    await snap(nowSec - 3600, 11000, 22000, 1500, 3000, 8000, 16000); // Xray mac +1000/+2000, iphone +500/+1000; 隧道 +3000/+6000
+    await snap(nowSec - 1800, 500, 800, 200, 300, 500, 1000);         // Xray 重启：mac +500/+800, iphone +200/+300; 隧道重连：+500/+1000
+    await snap(nowSec - 60, 1500, 2800, 1200, 2300, 1500, 3000);      // Xray mac +1000/+2000, iphone +1000/+2000; 隧道 +1000/+2000
+
+    const getRes = await handleXrayStatsGet(
+      new Request(`http://localhost/api/xray-stats?id=${SERVER_ID}&hours=24`),
+      env, sys
+    );
+    assert.equal(getRes.status, 200);
+    const data = await getRes.json();
+
+    // 隧道当天：up 3000+500+1000=4500, down 6000+1000+2000=9000
+    assert.equal(data.tunnel_today_up, 4500);
+    assert.equal(data.tunnel_today_down, 9000);
+    // Xray 当天：mac up 1000+500+1000=2500, down 2000+800+2000=4800；
+    // iPhone up 500+200+1000=1700, down 1000+300+2000=3300；
+    // Xray 当天合计 up 4200, down 8100
+    // 今日总计 = 隧道当天 + Xray 当天
+    assert.equal(data.today_total_up, 4500 + 4200);
+    assert.equal(data.today_total_down, 9000 + 8100);
+    // 今日总计应 >= 隧道当天（Xray 为正）
+    assert.ok(data.today_total_up >= data.tunnel_today_up);
+    assert.ok(data.today_total_down >= data.tunnel_today_down);
+  } finally {
+    await miniflare.dispose();
+  }
+});
+
+test('xray stats: today total is null only with no snapshots at all', async () => {
+  const miniflare = createMiniflare();
+  try {
+    const db = await miniflare.getD1Database('DB');
+    await seedServer(db);
+    clearAllCaches();
+    const env = { DB: db, API_SECRET: SECRET };
+    const sys = { is_public: 'true' };
+
+    // 一条快照都不发：没有任何代理数据
+    const getRes = await handleXrayStatsGet(
+      new Request(`http://localhost/api/xray-stats?id=${SERVER_ID}&hours=24`),
+      env, sys
+    );
+    assert.equal(getRes.status, 200);
+    const data = await getRes.json();
+    assert.equal(data.today_total_up, null);
+    assert.equal(data.today_total_down, null);
+    assert.equal(data.tunnel_today_up, null);
+    assert.equal(data.tunnel_today_down, null);
+    assert.equal(data.latest, null);
+  } finally {
+    await miniflare.dispose();
+  }
+});
+
 test('xray stats: per-user monthly totals and iphone quota', async () => {
   const miniflare = createMiniflare();
   try {
@@ -303,6 +386,10 @@ test('xray stats: tunnel fields are null before any tunnel snapshot', async () =
     assert.equal(data.tunnel_today_down, null);
     assert.equal(data.tunnel_month_up, null);
     assert.equal(data.tunnel_month_down, null);
+    // 有 Xray 快照但无隧道数据时，今日总计不为 null（等于 Xray 当天累计，
+    // 这里当天只有一条快照、无差分可算，故为 0）
+    assert.equal(data.today_total_up, 0);
+    assert.equal(data.today_total_down, 0);
   } finally {
     await miniflare.dispose();
   }

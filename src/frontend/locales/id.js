@@ -70,6 +70,7 @@ export default {
   xrayWindowTotal: 'Total periode',
   xrayTodayTotal: 'Total hari ini',
   xrayMonthTotal: 'Total bulan ini',
+  xrayTodayTotalCombined: 'Total hari ini',
   xrayDownlink: 'Unduh',
   xrayUplink: 'Unggah',
   xrayNoData: 'Belum ada data lalu lintas proxy',

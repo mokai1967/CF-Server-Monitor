@@ -71,6 +71,7 @@ export default {
   xrayWindowTotal: '区间累计',
   xrayTodayTotal: '今日累计',
   xrayMonthTotal: '当月累计',
+  xrayTodayTotalCombined: '今日总计',
   xrayDownlink: '下行',
   xrayUplink: '上行',
   xrayNoData: '暂无代理流量数据',

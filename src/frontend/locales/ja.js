@@ -70,6 +70,7 @@ export default {
   xrayWindowTotal: '期間合計',
   xrayTodayTotal: '今日合計',
   xrayMonthTotal: '当月合計',
+  xrayTodayTotalCombined: '今日合計',
   xrayDownlink: '下り',
   xrayUplink: '上り',
   xrayNoData: 'プロキシトラフィックのデータがまだありません',
