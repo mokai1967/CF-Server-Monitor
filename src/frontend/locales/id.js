@@ -68,6 +68,8 @@ export default {
   xrayProxyTraffic: 'Lalu lintas proxy · Xray',
   xraySession: 'Sesi saat ini',
   xrayWindowTotal: 'Total periode',
+  xrayTodayTotal: 'Total hari ini',
+  xrayMonthTotal: 'Total bulan ini',
   xrayDownlink: 'Unduh',
   xrayUplink: 'Unggah',
   xrayNoData: 'Belum ada data lalu lintas proxy',

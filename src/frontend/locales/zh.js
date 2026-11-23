@@ -69,6 +69,8 @@ export default {
   xrayProxyTraffic: '代理流量 · Xray',
   xraySession: '本次会话',
   xrayWindowTotal: '区间累计',
+  xrayTodayTotal: '今日累计',
+  xrayMonthTotal: '当月累计',
   xrayDownlink: '下行',
   xrayUplink: '上行',
   xrayNoData: '暂无代理流量数据',

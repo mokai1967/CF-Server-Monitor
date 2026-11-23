@@ -68,6 +68,8 @@ export default {
   xrayProxyTraffic: 'Tráfico proxy · Xray',
   xraySession: 'Sesión actual',
   xrayWindowTotal: 'Total del periodo',
+  xrayTodayTotal: 'Total de hoy',
+  xrayMonthTotal: 'Total del mes',
   xrayDownlink: 'Bajada',
   xrayUplink: 'Subida',
   xrayNoData: 'Aún no hay datos de tráfico proxy',

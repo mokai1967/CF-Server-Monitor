@@ -146,6 +146,60 @@ test('xray stats: tunnel counters accumulate by diff and expose latest session',
   }
 });
 
+test('xray stats: tunnel today/month totals use Shanghai boundaries', async () => {
+  const miniflare = createMiniflare();
+  try {
+    const db = await miniflare.getD1Database('DB');
+    await seedServer(db);
+    clearAllCaches();
+    const env = { DB: db, API_SECRET: SECRET };
+    const sys = { is_public: 'true' };
+
+    const nowSec = Math.floor(Date.now() / 1000);
+    const SHANGHAI = 8 * 3600;
+    const dayStart = Math.floor((nowSec + SHANGHAI) / 86400) * 86400 - SHANGHAI;
+    const d = new Date((nowSec + SHANGHAI) * 1000);
+    const monthStart = Math.floor(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), 1) / 1000) - SHANGHAI;
+    const isFirst = dayStart === monthStart;
+    // 距东八区午夜不足 1 小时时，今日快照可能跨日，跳过以免误报
+    if (nowSec - dayStart < 3600) return;
+
+    const snap = async (ts, tunUp, tunDown) => {
+      const body = { id: SERVER_ID, secret: SECRET, uplink: 100, downlink: 200, ts, tunnel_up: tunUp, tunnel_down: tunDown };
+      const r = await handleXrayStatsPost(postRequest(body), env);
+      assert.equal(r.status, 200);
+    };
+
+    // 月初前基线
+    await snap(monthStart - 7200, 1000, 2000);
+    // 昨日（当月内，除非今天是 1 号）
+    await snap(dayStart - 3600, 3000, 6000);
+    // 今日：增长、一次通道重连回落、再增长
+    await snap(nowSec - 3600, 5000, 10000); // 相对昨日 +2000 / +4000
+    await snap(nowSec - 1800, 500, 1000);   // 重连回落：+500 / +1000
+    await snap(nowSec - 60, 1500, 3000);    // +1000 / +2000
+
+    const getRes = await handleXrayStatsGet(
+      new Request(`http://localhost/api/xray-stats?id=${SERVER_ID}&hours=24`),
+      env, sys
+    );
+    assert.equal(getRes.status, 200);
+    const data = await getRes.json();
+
+    // 当天累计（东八区）：2000+500+1000=3500；4000+1000+2000=7000
+    assert.equal(data.tunnel_today_up, 3500);
+    assert.equal(data.tunnel_today_down, 7000);
+    // 当月累计（东八区）：1 号当天与当天相同，否则多出昨日部分
+    assert.equal(data.tunnel_month_up, isFirst ? 3500 : 5500);
+    assert.equal(data.tunnel_month_down, isFirst ? 7000 : 11000);
+    // 当月应 >= 当天
+    assert.ok(data.tunnel_month_up >= data.tunnel_today_up);
+    assert.ok(data.tunnel_month_down >= data.tunnel_today_down);
+  } finally {
+    await miniflare.dispose();
+  }
+});
+
 test('xray stats: per-user monthly totals and iphone quota', async () => {
   const miniflare = createMiniflare();
   try {
@@ -245,6 +299,10 @@ test('xray stats: tunnel fields are null before any tunnel snapshot', async () =
     assert.equal(data.tunnel_up, null);
     assert.equal(data.tunnel_down, null);
     assert.equal(data.tunnel_latest, null);
+    assert.equal(data.tunnel_today_up, null);
+    assert.equal(data.tunnel_today_down, null);
+    assert.equal(data.tunnel_month_up, null);
+    assert.equal(data.tunnel_month_down, null);
   } finally {
     await miniflare.dispose();
   }

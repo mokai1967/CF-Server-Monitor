@@ -257,6 +257,22 @@
                 <div class="xray-stat-label">{{ trans.xrayTunnelTraffic || '隧道流量' }} · {{ trans.xrayWindowTotal || '区间累计' }} · {{ trans.xrayUplink || '上行' }}</div>
                 <div class="xray-stat-value net-up">{{ formatBytes(xrayStats.tunnel_up || 0) }}</div>
               </div>
+              <div class="xray-stat" v-if="xrayStats.tunnel_today_down != null">
+                <div class="xray-stat-label">{{ trans.xrayTunnelTraffic || '隧道流量' }} · {{ trans.xrayTodayTotal || '今日累计' }} · {{ trans.xrayDownlink || '下行' }}</div>
+                <div class="xray-stat-value net-down">{{ formatBytes(xrayStats.tunnel_today_down || 0) }}</div>
+              </div>
+              <div class="xray-stat" v-if="xrayStats.tunnel_today_up != null">
+                <div class="xray-stat-label">{{ trans.xrayTunnelTraffic || '隧道流量' }} · {{ trans.xrayTodayTotal || '今日累计' }} · {{ trans.xrayUplink || '上行' }}</div>
+                <div class="xray-stat-value net-up">{{ formatBytes(xrayStats.tunnel_today_up || 0) }}</div>
+              </div>
+              <div class="xray-stat" v-if="xrayStats.tunnel_month_down != null">
+                <div class="xray-stat-label">{{ trans.xrayTunnelTraffic || '隧道流量' }} · {{ trans.xrayMonthTotal || '当月累计' }} · {{ trans.xrayDownlink || '下行' }}</div>
+                <div class="xray-stat-value net-down">{{ formatBytes(xrayStats.tunnel_month_down || 0) }}</div>
+              </div>
+              <div class="xray-stat" v-if="xrayStats.tunnel_month_up != null">
+                <div class="xray-stat-label">{{ trans.xrayTunnelTraffic || '隧道流量' }} · {{ trans.xrayMonthTotal || '当月累计' }} · {{ trans.xrayUplink || '上行' }}</div>
+                <div class="xray-stat-value net-up">{{ formatBytes(xrayStats.tunnel_month_up || 0) }}</div>
+              </div>
             </div>
             <div class="xray-note" v-if="xrayStats.tunnel_latest || xrayStats.tunnel_down != null">{{ trans.xrayTunnelNote || '' }}</div>
             <div class="xray-bars" v-if="xrayHourlyBars.length > 0 && xrayHourlyBars.some(b => b.total > 0)">

@@ -46,6 +46,42 @@ function monthStartSec(nowSec) {
   return Math.floor(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), 1) / 1000);
 }
 
+// 东八区（Asia/Shanghai，无夏令时）日/月起始：隧道「当天/当月」累计按
+// paul 所在的东八区边界算（与 Xray 自然月累计用的 UTC 口径不同，
+// 因为这是给 paul 看的“当天/当月”）。
+const SHANGHAI_OFFSET_SEC = 8 * 3600;
+function shanghaiDayStartSec(nowSec) {
+  return Math.floor((nowSec + SHANGHAI_OFFSET_SEC) / 86400) * 86400 - SHANGHAI_OFFSET_SEC;
+}
+function shanghaiMonthStartSec(nowSec) {
+  const d = new Date((nowSec + SHANGHAI_OFFSET_SEC) * 1000);
+  return Math.floor(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), 1) / 1000) - SHANGHAI_OFFSET_SEC;
+}
+
+// 隧道累计（正向差分）：从 startSec 起的快照求相邻正向差分累计，
+// 计数器回落按通道重连清零处理（回落后的新值即重连后新增用量）。
+// 与区间累计、自然月累计同一逻辑；不改 D1 表结构、不改侧车上报。
+async function tunnelCumulative(db, serverId, startSec) {
+  const baseline = await db.prepare(
+    'SELECT ts, tunnel_up, tunnel_down FROM xray_stats WHERE server_id = ? AND ts < ? ORDER BY ts DESC LIMIT 1'
+  ).bind(serverId, startSec).first();
+  const rows = await db.prepare(
+    'SELECT ts, tunnel_up, tunnel_down FROM xray_stats WHERE server_id = ? AND ts >= ? ORDER BY ts ASC LIMIT 5000'
+  ).bind(serverId, startSec).all();
+  const snaps = Array.isArray(rows?.results) ? rows.results : [];
+  let up = 0;
+  let down = 0;
+  let prev = baseline || null;
+  for (const s of snaps) {
+    if (prev && prev.tunnel_up != null && prev.tunnel_down != null && s.tunnel_up != null && s.tunnel_down != null) {
+      up += s.tunnel_up >= prev.tunnel_up ? s.tunnel_up - prev.tunnel_up : s.tunnel_up;
+      down += s.tunnel_down >= prev.tunnel_down ? s.tunnel_down - prev.tunnel_down : s.tunnel_down;
+    }
+    prev = s;
+  }
+  return { up, down };
+}
+
 export async function ensureXrayStatsTable(db) {
   await db.prepare(`
     CREATE TABLE IF NOT EXISTS xray_stats (
@@ -207,6 +243,12 @@ export async function handleXrayStatsGet(request, env, sys) {
   ).bind(serverId).first();
   const tunnelLatest = latestTunnel ? { ts: latestTunnel.ts, up: latestTunnel.tunnel_up, down: latestTunnel.tunnel_down } : null;
 
+  // 隧道当天/当月累计（东八区日/月边界，正向差分累计，与区间累计同一逻辑）。
+  // 当天从东八区 00:00 起算，当月从东八区当月 1 号 00:00 起算；隧道上报
+  // 2026-11-23 才开始，本月是部分月。
+  const tunnelToday = await tunnelCumulative(env.DB, serverId, shanghaiDayStartSec(nowSec));
+  const tunnelMonth = await tunnelCumulative(env.DB, serverId, shanghaiMonthStartSec(nowSec));
+
   // 按设备分开的自然月累计（UTC 自然月）：Mac = paul 的 uplink/downlink，
   // iPhone = iphone_up/iphone_down。计数器重启会清零，用正向差分累计，
   // 与区间累计同一逻辑；缺 iPhone 值的快照对不计入 iPhone。
@@ -278,6 +320,10 @@ export async function handleXrayStatsGet(request, env, sys) {
     tunnel_up: tunnelLatest ? tunnelTotalUp : null,
     tunnel_down: tunnelLatest ? tunnelTotalDown : null,
     tunnel_latest: tunnelLatest,
+    tunnel_today_up: tunnelLatest ? tunnelToday.up : null,
+    tunnel_today_down: tunnelLatest ? tunnelToday.down : null,
+    tunnel_month_up: tunnelLatest ? tunnelMonth.up : null,
+    tunnel_month_down: tunnelLatest ? tunnelMonth.down : null,
     users: {
       mac: { up: macUp, down: macDown },
       iphone: hasIphone ? { up: iphoneUp, down: iphoneDown } : null
