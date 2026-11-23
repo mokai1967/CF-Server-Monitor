@@ -259,7 +259,7 @@
               </div>
             </div>
             <div class="xray-note" v-if="xrayStats.tunnel_latest || xrayStats.tunnel_down != null">{{ trans.xrayTunnelNote || '' }}</div>
-            <div class="xray-bars" v-if="xrayHourlyBars.length > 0">
+            <div class="xray-bars" v-if="xrayHourlyBars.length > 0 && xrayHourlyBars.some(b => b.total > 0)">
               <div
                 v-for="bar in xrayHourlyBars"
                 :key="bar.ts"
@@ -268,7 +268,7 @@
                 :title="`${bar.label} · ↓ ${formatBytes(bar.down)} / ↑ ${formatBytes(bar.up)}`"
               ></div>
             </div>
-            <div class="xray-note" v-if="xrayHourlyBars.length === 0">{{ trans.xrayNoData || '暂无代理流量数据' }}</div>
+            <div class="xray-note" v-if="xrayHourlyBars.length === 0 || !xrayHourlyBars.some(b => b.total > 0)">{{ trans.xrayNoData || '暂无代理流量数据' }}</div>
             <div class="xray-note">{{ trans.xrayResetNote || '' }}<span v-if="xrayUpdatedText"> · {{ xrayUpdatedText }}</span></div>
           </template>
           <div class="xray-note" v-else>{{ trans.xrayNoData || '暂无代理流量数据' }}</div>
