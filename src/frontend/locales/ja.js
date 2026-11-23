@@ -84,6 +84,7 @@ export default {
   xrayDeviceMac: 'Mac',
   xrayDeviceIphone: 'iPhone',
   xrayUsersNote: 'Mac は paul の鍵、iPhone は専用の鍵を使用；iPhone は月 10 GB 上限（上り+下り合計）、上限到達で自動停止、翌月 1 日に復旧',
+  xrayProtoNote: 'ポート別バイト数（nftables）。ルール再構築でカウンタはリセットされ、スナップショット差分で累計。VLESS はここに含まれない（Xray 統計でカバー）',
   lastReport: '最終レポート',
   cpuUsage: 'CPU 使用率',
   gpuInfo: 'GPU 情報',

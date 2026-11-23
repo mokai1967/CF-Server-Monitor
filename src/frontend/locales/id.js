@@ -84,6 +84,7 @@ export default {
   xrayDeviceMac: 'Mac',
   xrayDeviceIphone: 'iPhone',
   xrayUsersNote: 'Mac memakai kunci paul, iPhone memakai kuncinya sendiri; iPhone dibatasi 10 GB/bulan (naik + turun), otomatis nonaktif saat mencapai batas dan pulih tanggal 1',
+  xrayProtoNote: 'Byte per porta (nftables); penghitung direset saat aturan dibangun ulang, diakumulasi dari selisih snapshot; VLESS tidak tercantum di sini (sudah tercakup statistik Xray)',
   lastReport: 'Laporan Terakhir',
   cpuUsage: 'Penggunaan CPU',
   gpuInfo: 'Info GPU',

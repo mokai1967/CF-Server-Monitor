@@ -84,6 +84,7 @@ export default {
   xrayDeviceMac: 'Mac',
   xrayDeviceIphone: 'iPhone',
   xrayUsersNote: 'Mac uses paul’s key, iPhone uses its own; iPhone is capped at 10 GB/month (up + down combined), auto-disabled at the cap and restored on the 1st',
+  xrayProtoNote: 'Byte counts by port (nftables); counters reset when rules are rebuilt, accumulated by snapshot diff; VLESS is not listed here (covered by Xray stats)',
   lastReport: 'Last Report',
   cpuUsage: 'CPU Usage',
   gpuInfo: 'GPU Info',

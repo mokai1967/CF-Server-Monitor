@@ -249,3 +249,83 @@ test('xray stats: tunnel fields are null before any tunnel snapshot', async () =
     await miniflare.dispose();
   }
 });
+
+test('xray stats: per-protocol monthly totals with counter reset', async () => {
+  const miniflare = createMiniflare();
+  try {
+    const db = await miniflare.getD1Database('DB');
+    await seedServer(db);
+    clearAllCaches();
+    const env = { DB: db, API_SECRET: SECRET };
+    const sys = { is_public: 'true' };
+
+    const nowSec = Math.floor(Date.now() / 1000);
+    const d = new Date(nowSec * 1000);
+    const mStart = Math.floor(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), 1) / 1000);
+    const proto = (hy2In, hy2Out, tuicIn, tuicOut, anyIn, anyOut, trIn, trOut) => ({
+      proto_hy2_in: hy2In, proto_hy2_out: hy2Out,
+      proto_tuic_in: tuicIn, proto_tuic_out: tuicOut,
+      proto_anytls_in: anyIn, proto_anytls_out: anyOut,
+      proto_trojan_in: trIn, proto_trojan_out: trOut
+    });
+    const snap = async (ts, extra) => {
+      const body = { id: SERVER_ID, secret: SECRET, uplink: 100, downlink: 200, ts, ...extra };
+      const r = await handleXrayStatsPost(postRequest(body), env);
+      assert.equal(r.status, 200);
+    };
+
+    // 月初前基线（带分协议值）
+    await snap(mStart - 3600, proto(1000, 2000, 500, 600, 100, 200, 300, 400));
+    // 月内：正常增长
+    await snap(mStart + 3600, proto(1500, 3000, 700, 900, 150, 300, 400, 500));
+    // 规则重建导致计数器清零：回落后的新值按新增用量计入
+    await snap(mStart + 7200, proto(200, 300, 50, 60, 10, 20, 30, 40));
+    // 再增长
+    await snap(mStart + 10800, proto(1200, 1300, 150, 160, 110, 120, 130, 140));
+
+    const getRes = await handleXrayStatsGet(
+      new Request(`http://localhost/api/xray-stats?id=${SERVER_ID}&hours=24`),
+      env, sys
+    );
+    assert.equal(getRes.status, 200);
+    const data = await getRes.json();
+
+    // hy2: in 500+200+1000=1700, out 1000+300+1000=2300
+    assert.deepEqual(data.protocols.hy2, { up: 2300, down: 1700 });
+    // tuic: in 200+50+100=350, out 300+60+100=460
+    assert.deepEqual(data.protocols.tuic, { up: 460, down: 350 });
+    // anytls: in 50+10+100=160, out 100+20+100=220
+    assert.deepEqual(data.protocols.anytls, { up: 220, down: 160 });
+    // trojan: in 100+30+100=230, out 100+40+100=240
+    assert.deepEqual(data.protocols.trojan, { up: 240, down: 230 });
+  } finally {
+    await miniflare.dispose();
+  }
+});
+
+test('xray stats: protocols is null before any proto snapshot', async () => {
+  const miniflare = createMiniflare();
+  try {
+    const db = await miniflare.getD1Database('DB');
+    await seedServer(db);
+    clearAllCaches();
+    const env = { DB: db, API_SECRET: SECRET };
+    const sys = { is_public: 'true' };
+
+    const nowSec = Math.floor(Date.now() / 1000);
+    const r = await handleXrayStatsPost(postRequest({
+      id: SERVER_ID, secret: SECRET, uplink: 100, downlink: 200, ts: nowSec - 60
+    }), env);
+    assert.equal(r.status, 200);
+
+    const getRes = await handleXrayStatsGet(
+      new Request(`http://localhost/api/xray-stats?id=${SERVER_ID}&hours=24`),
+      env, sys
+    );
+    assert.equal(getRes.status, 200);
+    const data = await getRes.json();
+    assert.equal(data.protocols, null);
+  } finally {
+    await miniflare.dispose();
+  }
+});

@@ -84,6 +84,7 @@ export default {
   xrayDeviceMac: 'Mac',
   xrayDeviceIphone: 'iPhone',
   xrayUsersNote: 'Mac usa la clave de paul, iPhone usa la suya; iPhone tiene un límite de 10 GB/mes (subida + bajada), se desactiva al llegar al límite y se restaura el día 1',
+  xrayProtoNote: 'Bytes por puerto (nftables); los contadores se reinician al reconstruir las reglas y se acumulan por diferencia de instantáneas; VLESS no aparece aquí (cubierto por las estadísticas de Xray)',
   lastReport: 'Último reporte',
   cpuUsage: 'Uso de CPU',
   gpuInfo: 'Info de GPU',

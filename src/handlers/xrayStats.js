@@ -23,6 +23,12 @@
  * iphone = iPhone。uplink / downlink 沿用 paul 的计数（Mac）；侧车另报
  * iphone_up / iphone_down。GET 返回两用户各自的自然月累计（UTC 自然月），
  * 以及 iPhone 的 10 GiB 月上限与使用比例。
+ *
+ * 分协议统计（2026-11-23 起）：nftables 按端口+协议计字节，侧车每 5 分钟
+ * 上报 8 个累计计数器（proto_hy2_in/out、proto_tuic_in/out、
+ * proto_anytls_in/out、proto_trojan_in/out）。计数器在 nft 规则重建后
+ * 清零，与 Xray/隧道计数器一样只存原始快照，GET 用正向差分累计自然月
+ * 用量。VLESS 不走端口计数（已由 Xray stats 覆盖）；Trojan 计入作对照。
  */
 import { createSuccessResponse, createBadRequestResponse, createUnauthorizedResponse, createNotFoundResponse } from '../utils/errors.js';
 import { checkAuth, hasAppPasswordAccess, simpleAuthResponse } from '../middleware/auth.js';
@@ -52,7 +58,8 @@ export async function ensureXrayStatsTable(db) {
   `).run();
   // 2026-11-23 新增列：在线设备数、月出站总量、隧道流量。老表用 ALTER 补列。
   // 2026-11-23 新增列：iPhone 用户计数器（按设备分开统计）。
-  for (const col of ['device_count INTEGER', 'monthly_tx INTEGER', 'tunnel_up INTEGER', 'tunnel_down INTEGER', 'iphone_up INTEGER', 'iphone_down INTEGER']) {
+  // 2026-11-23 新增列：分协议 nft 计数器（HY2/TUIC/AnyTLS/Trojan 各上下行）。
+  for (const col of ['device_count INTEGER', 'monthly_tx INTEGER', 'tunnel_up INTEGER', 'tunnel_down INTEGER', 'iphone_up INTEGER', 'iphone_down INTEGER', 'proto_hy2_in INTEGER', 'proto_hy2_out INTEGER', 'proto_tuic_in INTEGER', 'proto_tuic_out INTEGER', 'proto_anytls_in INTEGER', 'proto_anytls_out INTEGER', 'proto_trojan_in INTEGER', 'proto_trojan_out INTEGER']) {
     try {
       await db.prepare(`ALTER TABLE xray_stats ADD COLUMN ${col}`).run();
     } catch (_) {
@@ -69,11 +76,12 @@ function normalizeSnapshotTs(value) {
 }
 
 // POST /api/xray-stats
-// body: { id, secret, uplink, downlink, ts?, device_count?, monthly_tx?, tunnel_up?, tunnel_down?, iphone_up?, iphone_down? }
+// body: { id, secret, uplink, downlink, ts?, device_count?, monthly_tx?, tunnel_up?, tunnel_down?, iphone_up?, iphone_down?, proto_hy2_in?, proto_hy2_out?, proto_tuic_in?, proto_tuic_out?, proto_anytls_in?, proto_anytls_out?, proto_trojan_in?, proto_trojan_out? }
 // （ts 为秒或毫秒时间戳，缺省用服务端时间；device_count / monthly_tx 为
 // 可选的最新值语义字段，缺省时不覆盖已有值；tunnel_up / tunnel_down 为
 // 可选的隧道通道累计计数器，缺省时存 NULL；iphone_up / iphone_down 为
-// 可选的 iPhone 用户累计计数器，缺省时存 NULL）
+// 可选的 iPhone 用户累计计数器，缺省时存 NULL；proto_* 为可选的分协议
+// nft 累计计数器，缺省时存 NULL）
 export async function handleXrayStatsPost(request, env) {
   let data;
   try {
@@ -98,6 +106,15 @@ export async function handleXrayStatsPost(request, env) {
   const tunnelDown = data.tunnel_down == null ? null : Math.max(0, Math.floor(Number(data.tunnel_down) || 0));
   const iphoneUp = data.iphone_up == null ? null : Math.max(0, Math.floor(Number(data.iphone_up) || 0));
   const iphoneDown = data.iphone_down == null ? null : Math.max(0, Math.floor(Number(data.iphone_down) || 0));
+  const protoNum = (v) => (v == null ? null : Math.max(0, Math.floor(Number(v) || 0)));
+  const protoHy2In = protoNum(data.proto_hy2_in);
+  const protoHy2Out = protoNum(data.proto_hy2_out);
+  const protoTuicIn = protoNum(data.proto_tuic_in);
+  const protoTuicOut = protoNum(data.proto_tuic_out);
+  const protoAnytlsIn = protoNum(data.proto_anytls_in);
+  const protoAnytlsOut = protoNum(data.proto_anytls_out);
+  const protoTrojanIn = protoNum(data.proto_trojan_in);
+  const protoTrojanOut = protoNum(data.proto_trojan_out);
 
   await ensureXrayStatsTable(env.DB);
 
@@ -105,8 +122,8 @@ export async function handleXrayStatsPost(request, env) {
   if (!server) return createNotFoundResponse('Server not found');
 
   await env.DB.prepare(
-    'INSERT OR REPLACE INTO xray_stats (server_id, ts, uplink, downlink, device_count, monthly_tx, tunnel_up, tunnel_down, iphone_up, iphone_down) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'
-  ).bind(serverId, ts, uplink, downlink, deviceCount, monthlyTx, tunnelUp, tunnelDown, iphoneUp, iphoneDown).run();
+    'INSERT OR REPLACE INTO xray_stats (server_id, ts, uplink, downlink, device_count, monthly_tx, tunnel_up, tunnel_down, iphone_up, iphone_down, proto_hy2_in, proto_hy2_out, proto_tuic_in, proto_tuic_out, proto_anytls_in, proto_anytls_out, proto_trojan_in, proto_trojan_out) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'
+  ).bind(serverId, ts, uplink, downlink, deviceCount, monthlyTx, tunnelUp, tunnelDown, iphoneUp, iphoneDown, protoHy2In, protoHy2Out, protoTuicIn, protoTuicOut, protoAnytlsIn, protoAnytlsOut, protoTrojanIn, protoTrojanOut).run();
 
   return createSuccessResponse({ ok: true, ts });
 }
@@ -193,19 +210,30 @@ export async function handleXrayStatsGet(request, env, sys) {
   // 按设备分开的自然月累计（UTC 自然月）：Mac = paul 的 uplink/downlink，
   // iPhone = iphone_up/iphone_down。计数器重启会清零，用正向差分累计，
   // 与区间累计同一逻辑；缺 iPhone 值的快照对不计入 iPhone。
+  // 分协议自然月累计同理：nft 计数器在规则重建后清零，用正向差分累计；
+  // 缺分协议值的快照对不计入该协议。
   const mStart = monthStartSec(nowSec);
   const mBaseline = await env.DB.prepare(
-    'SELECT ts, uplink, downlink, iphone_up, iphone_down FROM xray_stats WHERE server_id = ? AND ts < ? ORDER BY ts DESC LIMIT 1'
+    'SELECT ts, uplink, downlink, iphone_up, iphone_down, proto_hy2_in, proto_hy2_out, proto_tuic_in, proto_tuic_out, proto_anytls_in, proto_anytls_out, proto_trojan_in, proto_trojan_out FROM xray_stats WHERE server_id = ? AND ts < ? ORDER BY ts DESC LIMIT 1'
   ).bind(serverId, mStart).first();
   const mRows = await env.DB.prepare(
-    'SELECT ts, uplink, downlink, iphone_up, iphone_down FROM xray_stats WHERE server_id = ? AND ts >= ? ORDER BY ts ASC LIMIT 5000'
+    'SELECT ts, uplink, downlink, iphone_up, iphone_down, proto_hy2_in, proto_hy2_out, proto_tuic_in, proto_tuic_out, proto_anytls_in, proto_anytls_out, proto_trojan_in, proto_trojan_out FROM xray_stats WHERE server_id = ? AND ts >= ? ORDER BY ts ASC LIMIT 5000'
   ).bind(serverId, mStart).all();
   const mSnaps = Array.isArray(mRows?.results) ? mRows.results : [];
   let macUp = 0, macDown = 0, iphoneUp = 0, iphoneDown = 0, hasIphone = false;
-  if (mBaseline && mBaseline.iphone_up != null && mBaseline.iphone_down != null) hasIphone = true;
+  let protoHy2Up = 0, protoHy2Down = 0, protoTuicUp = 0, protoTuicDown = 0;
+  let protoAnytlsUp = 0, protoAnytlsDown = 0, protoTrojanUp = 0, protoTrojanDown = 0;
+  let hasProto = false;
+  const protoKeys = ['proto_hy2_in', 'proto_hy2_out', 'proto_tuic_in', 'proto_tuic_out', 'proto_anytls_in', 'proto_anytls_out', 'proto_trojan_in', 'proto_trojan_out'];
+  const protoDiff = (prev, cur, key) => {
+    if (prev == null || cur == null || prev[key] == null || cur[key] == null) return 0;
+    return cur[key] >= prev[key] ? cur[key] - prev[key] : cur[key];
+  };
+  if (mBaseline && protoKeys.every((k) => mBaseline[k] != null)) hasProto = true;
   let mPrev = mBaseline || null;
   for (const s of mSnaps) {
     if (s.iphone_up != null && s.iphone_down != null) hasIphone = true;
+    if (protoKeys.every((k) => s[k] != null)) hasProto = true;
     if (mPrev) {
       macUp += s.uplink >= mPrev.uplink ? s.uplink - mPrev.uplink : s.uplink;
       macDown += s.downlink >= mPrev.downlink ? s.downlink - mPrev.downlink : s.downlink;
@@ -213,12 +241,26 @@ export async function handleXrayStatsGet(request, env, sys) {
         iphoneUp += s.iphone_up >= mPrev.iphone_up ? s.iphone_up - mPrev.iphone_up : s.iphone_up;
         iphoneDown += s.iphone_down >= mPrev.iphone_down ? s.iphone_down - mPrev.iphone_down : s.iphone_down;
       }
+      protoHy2Down += protoDiff(mPrev, s, 'proto_hy2_in');
+      protoHy2Up += protoDiff(mPrev, s, 'proto_hy2_out');
+      protoTuicDown += protoDiff(mPrev, s, 'proto_tuic_in');
+      protoTuicUp += protoDiff(mPrev, s, 'proto_tuic_out');
+      protoAnytlsDown += protoDiff(mPrev, s, 'proto_anytls_in');
+      protoAnytlsUp += protoDiff(mPrev, s, 'proto_anytls_out');
+      protoTrojanDown += protoDiff(mPrev, s, 'proto_trojan_in');
+      protoTrojanUp += protoDiff(mPrev, s, 'proto_trojan_out');
     }
     mPrev = s;
   }
   const iphoneTotal = iphoneUp + iphoneDown;
   const iphoneUsedPercent = +(iphoneTotal / IPHONE_QUOTA_BYTES * 100).toFixed(1);
   const iphoneOverQuota = iphoneTotal > IPHONE_QUOTA_BYTES;
+  const protocols = hasProto ? {
+    hy2: { up: protoHy2Up, down: protoHy2Down },
+    tuic: { up: protoTuicUp, down: protoTuicDown },
+    anytls: { up: protoAnytlsUp, down: protoAnytlsDown },
+    trojan: { up: protoTrojanUp, down: protoTrojanDown }
+  } : null;
 
   return createSuccessResponse({
     server_id: serverId,
@@ -242,6 +284,7 @@ export async function handleXrayStatsGet(request, env, sys) {
     },
     iphone_quota: IPHONE_QUOTA_BYTES,
     iphone_used_percent: iphoneUsedPercent,
-    iphone_over_quota: iphoneOverQuota
+    iphone_over_quota: iphoneOverQuota,
+    protocols
   });
 }

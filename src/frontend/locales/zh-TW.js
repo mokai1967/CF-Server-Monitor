@@ -85,6 +85,7 @@ export default {
   xrayDeviceMac: 'Mac',
   xrayDeviceIphone: 'iPhone',
   xrayUsersNote: 'Mac 用 paul 的鑰匙，iPhone 用自己的鑰匙；iPhone 每月上限 10 GB（上行+下行合計），到量自動停用、下月 1 號恢復',
+  xrayProtoNote: '按連接埠計位元組（nftables），計數器在規則重建後清零、按快照差分累計；VLESS 不在此列（已由 Xray 統計覆蓋）',
   lastReport: '最後回報',
   cpuUsage: 'CPU 使用率',
   gpuInfo: 'GPU 資訊',

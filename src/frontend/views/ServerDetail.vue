@@ -221,6 +221,25 @@
               </div>
             </div>
             <div class="xray-note" v-if="xrayStats.users && xrayStats.users.iphone">{{ trans.xrayUsersNote || '' }}</div>
+            <div class="xray-stats-row two-col" v-if="xrayStats.protocols">
+              <div class="xray-stat">
+                <div class="xray-stat-label">Hysteria2 · {{ trans.xrayMonthlyUsed || '本月已用' }}</div>
+                <div class="xray-stat-value">↓ {{ formatBytes(xrayStats.protocols.hy2.down || 0) }} / ↑ {{ formatBytes(xrayStats.protocols.hy2.up || 0) }}</div>
+              </div>
+              <div class="xray-stat">
+                <div class="xray-stat-label">TUIC · {{ trans.xrayMonthlyUsed || '本月已用' }}</div>
+                <div class="xray-stat-value">↓ {{ formatBytes(xrayStats.protocols.tuic.down || 0) }} / ↑ {{ formatBytes(xrayStats.protocols.tuic.up || 0) }}</div>
+              </div>
+              <div class="xray-stat">
+                <div class="xray-stat-label">AnyTLS · {{ trans.xrayMonthlyUsed || '本月已用' }}</div>
+                <div class="xray-stat-value">↓ {{ formatBytes(xrayStats.protocols.anytls.down || 0) }} / ↑ {{ formatBytes(xrayStats.protocols.anytls.up || 0) }}</div>
+              </div>
+              <div class="xray-stat">
+                <div class="xray-stat-label">Trojan · {{ trans.xrayMonthlyUsed || '本月已用' }}</div>
+                <div class="xray-stat-value">↓ {{ formatBytes(xrayStats.protocols.trojan.down || 0) }} / ↑ {{ formatBytes(xrayStats.protocols.trojan.up || 0) }}</div>
+              </div>
+            </div>
+            <div class="xray-note" v-if="xrayStats.protocols">{{ trans.xrayProtoNote || '' }}</div>
             <div class="xray-stats-row" v-if="xrayStats.tunnel_latest || xrayStats.tunnel_down != null">
               <div class="xray-stat" v-if="xrayStats.tunnel_latest">
                 <div class="xray-stat-label">{{ trans.xrayTunnelTraffic || '隧道流量' }} · {{ trans.xraySession || '本次会话' }} · {{ trans.xrayDownlink || '下行' }}</div>
